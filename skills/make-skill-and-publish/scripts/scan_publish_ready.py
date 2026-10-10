@@ -13,8 +13,13 @@ Options:
     --fail-on {high,medium,low,none}
                            Exit non-zero when a finding at this level or above is
                            present. Default: high.
-    --max-file-mb N        Flag files larger than N MB. Default: 5.
-    --exclude GLOB         Skip paths matching a glob (repeatable).
+    --max-file-mb N        Flag files larger than N MB, and skip reading their
+                           contents. Default: 5. Files over the limit are reported
+                           as content-not-scanned so a clean report never hides
+                           a file that was never read.
+    --exclude GLOB         Skip paths matching a glob (repeatable). A glob that
+                           matches a directory prunes that whole directory, so
+                           both `--exclude scratch` and `--exclude scratch/*` work.
     -q, --quiet            Print counts only (text mode).
 
 Exit codes:
@@ -74,28 +79,43 @@ CONTENT_RULES = [
     ("high", "gitlab-pat", re.compile(r"\bglpat-[A-Za-z0-9_\-]{20}\b"), True),
     ("high", "huggingface-token", re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"), True),
     ("high", "jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"), True),
+    # These two deliberately do NOT carry a `[\w.\-]*` prefix. It added nothing
+    # (a zero-length prefix matches anywhere the keyword does, and only group 1 is
+    # ever read) but cost O(n^2): on a single 8 KB line it burned ~3 s, and the
+    # 2 MB content cap did not save any real file - minified JS or a one-line JSON
+    # dump blew up long before that. Verified equivalent to the old form over
+    # 60k randomized inputs plus handcrafted edge cases.
     ("medium", "generic-secret-assignment",
      re.compile(
-         r"(?i)[\w.\-]*(?:api[_-]?key|apikey|secret|client[_-]?secret|access[_-]?token|"
+         r"(?i)(?:api[_-]?key|apikey|secret|client[_-]?secret|access[_-]?token|"
          r"auth[_-]?token|refresh[_-]?token|token|password|passwd|pwd)\b"
          r"\s*[:=]\s*[\"']([^\"'\n]{8,})[\"']"
      ), True),
     ("medium", "generic-secret-unquoted",
      re.compile(
-         r"(?i)[\w.\-]*(?:api[_-]?key|apikey|secret|access[_-]?token|auth[_-]?token|"
+         r"(?i)(?:api[_-]?key|apikey|secret|access[_-]?token|auth[_-]?token|"
          r"refresh[_-]?token|bearer[_-]?token|token|password|passwd|pwd)\b"
          r"\s*[:=]\s*([^\s\"'#]{8,})"
      ), True),
     ("medium", "bearer-token",
      re.compile(r"(?i)\bBearer\s+[A-Za-z0-9\-._~+/]{20,}=*"), True),
+    # The separator before the profile folder is optional because `[A-Za-z]:\\` has
+    # already consumed the one right after the drive, so a required `\Users\` could
+    # never match the first segment - i.e. it missed <drive>:\Users\<name>, the most
+    # common shape of a leaked path, and only fired on deeper ones. The prefix is
+    # bounded to keep the scan linear. (Written as `<drive>:` on purpose: a literal
+    # example here would itself trip this rule and redden the repo's own gate.)
     ("medium", "windows-user-path",
-     re.compile(r"[A-Za-z]:\\[^\n\"'<>|]*"
-                r"(?:\\Users\\|\\AppData\\|\\Documents\\|\\Desktop\\|\\Downloads\\|\\OneDrive\\)"
+     re.compile(r"[A-Za-z]:\\[^\n\"'<>|]{0,512}"
+                r"(?:\\?(?:Users|AppData|Documents|Desktop|Downloads|OneDrive)\\)"
                 r"[^\n\"'<>|]*"), False),
     ("medium", "unix-home-path",
      re.compile(r"(?<![\w.])/(?:home|Users)/[A-Za-z0-9._-]+/"), False),
+    # Local part and domain are bounded to the RFC 5321 lengths. Unbounded `+`
+    # quantifiers made this O(n^2) on a long dot-separated run (~100 s per 256 KB
+    # of "a.a.a..."), and no real address exceeds these limits.
     ("medium", "email-address",
-     re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"), False),
+     re.compile(r"\b[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,}\b"), False),
     ("medium", "cn-mobile-number", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), False),
     ("medium", "cn-id-number", re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"), False),
 ]
@@ -111,7 +131,6 @@ PLACEHOLDER_VALUES = {
     "", "none", "null", "true", "false", "changeme", "your_api_key",
     "your_token", "your_secret", "placeholder", "todo", "fixme", "dummy",
 }
-CONTENT_SCAN_LIMIT = 2 * 1024 * 1024  # 2 MB
 
 
 def mask(value: str) -> str:
@@ -158,9 +177,15 @@ def scan_file(path: Path, rel: str, max_bytes: int, findings: list) -> None:
         add(findings, "low", "unreadable", rel, 0, str(exc))
         return
 
-    if size > max_bytes:
+    oversized = size > max_bytes
+    if oversized:
         add(findings, "low", "large-file", rel, 0,
             f"{size / 1024 / 1024:.1f} MB > {max_bytes / 1024 / 1024:.1f} MB")
+        # A file we never read must never look clean. Report the gap rather than
+        # returning silently, or a secret in a 2-5 MB file ships unnoticed.
+        add(findings, "medium", "content-not-scanned", rel, 0,
+            f"contents were NOT scanned: {size / 1024 / 1024:.1f} MB exceeds the "
+            f"{max_bytes / 1024 / 1024:.1f} MB --max-file-mb limit")
 
     name = path.name
     if any(fnmatch.fnmatch(name, pat) for pat in SECRET_FILENAMES):
@@ -168,7 +193,7 @@ def scan_file(path: Path, rel: str, max_bytes: int, findings: list) -> None:
     elif any(fnmatch.fnmatch(name, pat) for pat in JUNK_FILE_PATTERNS):
         add(findings, "low", "junk-file", rel, 0, f"junk filename: {name}")
 
-    if size > CONTENT_SCAN_LIMIT or is_binary(path):
+    if oversized or is_binary(path):
         return
 
     try:
@@ -198,15 +223,34 @@ def scan_file(path: Path, rel: str, max_bytes: int, findings: list) -> None:
 
 
 def iter_files(root: Path, excludes: list):
+    def excluded(rel_path: str) -> bool:
+        return any(fnmatch.fnmatch(rel_path, pat) for pat in excludes)
+
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+
+        # Match an --exclude glob against a directory's relative path AND its bare
+        # name, so `--exclude scratch` prunes the tree instead of silently doing
+        # nothing (only `scratch/*` used to work).
+        kept = []
+        for dname in dirnames:
+            full_dir = Path(dirpath) / dname
+            try:
+                rel_dir = full_dir.relative_to(root).as_posix()
+            except ValueError:
+                rel_dir = full_dir.as_posix()
+            if excluded(rel_dir) or excluded(dname):
+                continue
+            kept.append(dname)
+        dirnames[:] = kept
+
         for fname in filenames:
             full = Path(dirpath) / fname
             try:
                 rel = full.relative_to(root).as_posix()
             except ValueError:
                 rel = full.as_posix()
-            if any(fnmatch.fnmatch(rel, pat) for pat in excludes):
+            if excluded(rel):
                 continue
             yield full, rel
 
@@ -222,7 +266,8 @@ def main(argv=None) -> int:
     parser.add_argument("--fail-on", choices=["high", "medium", "low", "none"],
                         default="high", help="Exit non-zero at this level or above")
     parser.add_argument("--max-file-mb", type=float, default=5.0,
-                        help="Flag files larger than this (default: 5)")
+                        help="Flag files larger than this, and skip reading their contents "
+                             "(default: 5)")
     parser.add_argument("--exclude", action="append", default=[],
                         help="Skip paths matching a glob (repeatable)")
     parser.add_argument("-q", "--quiet", action="store_true", help="Counts only")
@@ -244,9 +289,12 @@ def main(argv=None) -> int:
             file_count += 1
             scan_file(root, root.name, max_bytes, findings)
         else:
+            # Path('.').name is '' - prefixing blindly turned every finding into
+            # '/k.pem', which reads as an absolute path and loses the root.
+            prefix = base.name
             for full, rel in iter_files(root, args.exclude):
                 file_count += 1
-                scan_file(full, f"{base.name}/{rel}", max_bytes, findings)
+                scan_file(full, f"{prefix}/{rel}" if prefix else rel, max_bytes, findings)
 
     findings.sort(key=lambda f: (-SEVERITY_RANK[f["severity"]], f["path"], f["line"]))
     counts = {"high": 0, "medium": 0, "low": 0}

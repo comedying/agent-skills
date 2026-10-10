@@ -148,9 +148,14 @@ gh skill publish --fix              # 只自动修（如剔除安装元数据）
 ```text
 skills/*/SKILL.md
 skills/{scope}/*/SKILL.md
-*/SKILL.md            （仓库根目录一级）
-plugins/{scope}/skills/*/SKILL.md
+{prefix}/skills/*/SKILL.md
+{prefix}/skills/{scope}/*/SKILL.md
+*/SKILL.md                        （仓库根目录一级）
+plugins/*/skills/*/SKILL.md
 ```
+
+> 注意：`gh skill publish --help` 只列 4 条，漏掉 `{prefix}/skills/...` 两条，报错信息里才列全。
+> 上面 6 条是按 `gh` 实测行为补的，`scripts/validate_skill.py` 认的是同一套。
 
 **校验内容**：
 

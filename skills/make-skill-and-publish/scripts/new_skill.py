@@ -10,13 +10,16 @@ Usage:
                         [--interface display_name="..." --interface short_description="..."]
 
 The generated SKILL.md contains TODO placeholders on purpose: fill them in before
-publishing. Exit codes: 0 ok, 1 usage error, 2 target already exists.
+publishing. Exit codes: 0 ok, 1 usage or I/O error, 2 target already exists.
+(A malformed command line also exits 2 - that is argparse's own usage code - so
+treat 2 as "nothing was created".)
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -97,24 +100,39 @@ def main(argv=None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    resources = [r.strip() for r in args.resources.split(",") if r.strip()]
+    # dict.fromkeys dedupes and keeps order: `--resources scripts,scripts` used to
+    # die with an uncaught FileExistsError on the second mkdir of the same folder.
+    resources = list(dict.fromkeys(r.strip() for r in args.resources.split(",") if r.strip()))
     bad = [r for r in resources if r not in ALLOWED_RESOURCES]
     if bad:
         print(f"error: unknown resource(s): {', '.join(bad)}", file=sys.stderr)
         return 1
 
-    skill_dir = Path(args.path).expanduser().resolve() / name
+    parent = Path(args.path).expanduser().resolve()
+    if parent.exists() and not parent.is_dir():
+        print(f"error: --path is not a directory: {parent}", file=sys.stderr)
+        return 1
+
+    skill_dir = parent / name
     if skill_dir.exists():
         print(f"error: target already exists: {skill_dir}", file=sys.stderr)
         return 2
 
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        SKILL_TEMPLATE.format(name=name, title=title_of(name)), encoding="utf-8"
-    )
-    write_openai_yaml(skill_dir, name, interface)
-    for resource in resources:
-        (skill_dir / resource).mkdir()
+    # Roll the whole thing back if any step fails. A half-written skill directory is
+    # worse than none: the retry hits "target already exists" with no way forward.
+    try:
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            SKILL_TEMPLATE.format(name=name, title=title_of(name)), encoding="utf-8"
+        )
+        write_openai_yaml(skill_dir, name, interface)
+        for resource in resources:
+            (skill_dir / resource).mkdir()
+    except OSError as exc:
+        shutil.rmtree(skill_dir, ignore_errors=True)
+        print(f"error: could not create the skill, nothing was left behind: {exc}",
+              file=sys.stderr)
+        return 1
 
     print(f"created {skill_dir}")
     for path in sorted(skill_dir.rglob("*")):

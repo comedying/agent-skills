@@ -8,8 +8,9 @@ it cannot tell you whether the skill makes good decisions.
 Usage:
     python validate_skill.py <path> [<path> ...] [--json] [-q]
 
-A path may be a skill directory (contains SKILL.md) or a repo root containing
-skills/*/SKILL.md. Exit codes: 0 no errors, 1 errors found, 2 usage error.
+A path may be a skill directory (contains SKILL.md) or a repo root, in which case
+the same layouts `gh skill publish` discovers are searched (see DISCOVERY_PATTERNS).
+Exit codes: 0 no errors, 1 errors found, 2 usage error.
 """
 
 from __future__ import annotations
@@ -25,6 +26,25 @@ MAX_DESCRIPTION = 1024
 RECOMMENDED_MAX_BODY_LINES = 500
 ALLOWED_FRONTMATTER = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 
+# YAML block scalar indicators: `description: >` / `|`, optionally with a chomping
+# or indentation modifier. The indicator is syntax, not content.
+BLOCK_SCALAR = re.compile(r"^[|>][-+]?\d*$")
+
+# Where `gh skill publish` looks for skills. Verified against gh 2.102.0 by
+# planting a skill in each layout and checking which ones gh reported finding -
+# "not a git repository"/"Dry run complete" on all six, "no skills found" only
+# when the repo was truly empty. Keep this in sync with gh, not with its --help
+# (which, at 2.102.0, omits the two `{prefix}/skills/...` rows its own error
+# message lists).
+DISCOVERY_PATTERNS = (
+    "skills/*/SKILL.md",
+    "skills/*/*/SKILL.md",
+    "*/skills/*/SKILL.md",
+    "*/skills/*/*/SKILL.md",
+    "*/SKILL.md",
+    "plugins/*/skills/*/SKILL.md",
+)
+
 
 def parse_frontmatter(text: str):
     if not text.startswith("---"):
@@ -32,8 +52,9 @@ def parse_frontmatter(text: str):
     match = re.match(r"^---\r?\n(.*?)(?:\r?\n---\r?\n?|\Z)", text, re.DOTALL)
     if not match:
         return None, {}
+    raw_front = match.group(1)
     values, lists, key = {}, set(), None
-    for raw in match.group(1).splitlines():
+    for raw in raw_front.splitlines():
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         if re.match(r"^\s", raw):
@@ -50,7 +71,15 @@ def parse_frontmatter(text: str):
         values.setdefault(key, [])
         if item.group(2).strip():
             values[key].append(item.group(2).strip())
-    flat = {k: "\n".join(v).strip() for k, v in values.items()}
+    flat = {}
+    for k, v in values.items():
+        # Fold a block scalar: drop the `>`/`|` indicator and join the indented
+        # lines. Keeping the indicator as content made a valid `description: >`
+        # fail with a bogus "must not contain '>'" - and gh accepts that file.
+        if v and BLOCK_SCALAR.match(v[0].strip()):
+            flat[k] = " ".join(part.strip() for part in v[1:]).strip()
+        else:
+            flat[k] = "\n".join(v).strip()
     return flat, {"_lists": lists, "_body_start": match.end()}
 
 
@@ -68,6 +97,14 @@ def check(skill_dir: Path):
         return [f"SKILL.md not found in {skill_dir}"], warnings
 
     text = skill_md.read_text(encoding="utf-8", errors="ignore")
+    if text.startswith("﻿"):
+        # gh rejects a BOM too, but reports "missing required field: name", which
+        # sends you looking at the frontmatter instead of the encoding. Notepad and
+        # "UTF-8 with BOM" both produce this on Windows.
+        errors.append("SKILL.md starts with a UTF-8 BOM - re-save it as 'UTF-8' without BOM "
+                      "(a BOM makes gh skill publish report missing name/description)")
+        text = text.lstrip("﻿")
+
     front, meta = parse_frontmatter(text)
     if front is None:
         errors.append("SKILL.md must start with a '---' YAML frontmatter block")
@@ -75,7 +112,11 @@ def check(skill_dir: Path):
 
     for key in front:
         if key not in ALLOWED_FRONTMATTER:
-            errors.append(f"unexpected frontmatter key '{key}' (allowed: {', '.join(sorted(ALLOWED_FRONTMATTER))})")
+            # gh accepts unknown keys, so failing here would block a repo the real
+            # validator publishes. Point at the right home for the data instead.
+            warnings.append(f"unknown frontmatter key '{key}' - gh skill publish accepts it, "
+                            f"but only {', '.join(sorted(ALLOWED_FRONTMATTER))} are meaningful; "
+                            "put custom data under 'metadata'")
 
     name = unquote(front.get("name", ""))
     if not name:
@@ -114,6 +155,13 @@ def check(skill_dir: Path):
     if re.search(r"^\s*\[TODO:", body, re.MULTILINE):
         errors.append("SKILL.md still contains an unfinished [TODO: ...] placeholder")
 
+    # new_skill.py puts a [TODO: ...] in the description as well as the body. A body-only
+    # check let a skill through with the placeholder still in its description - the one
+    # field that decides whether the skill ever runs - and gh does not catch it either.
+    for key, value in front.items():
+        if "[TODO:" in value:
+            errors.append(f"frontmatter '{key}' still contains an unfinished [TODO: ...] placeholder")
+
     for target in re.findall(r"\]\(([^)\s]+)\)", body):
         if target.startswith(("http://", "https://", "#", "mailto:")):
             continue
@@ -131,8 +179,9 @@ def discover(path: Path):
         return [path.parent]
     if (path / "SKILL.md").exists():
         return [path]
-    found = {p.parent for p in path.glob("skills/*/SKILL.md")}
-    found |= {p.parent for p in path.glob("skills/*/*/SKILL.md")}
+    found = set()
+    for pattern in DISCOVERY_PATTERNS:
+        found |= {p.parent for p in path.glob(pattern)}
     return sorted(found)
 
 
