@@ -1,0 +1,4 @@
+interface:
+  display_name: "Make Skill and Publish"
+  short_description: "Create an Agent Skill and publish it to GitHub"
+  default_prompt: "Use $make-skill-and-publish to turn this requirement into a validated Agent Skill and publish it to GitHub."
