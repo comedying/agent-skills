@@ -1,6 +1,7 @@
 ---
 name: make-skill-and-publish
 description: Turn a plain-language requirement, document, or workflow into a complete, validated Agent Skill and publish it to GitHub. Use when the user wants a skill created, wants to package a repeatable capability for an agent, or wants to open-source, release, share, or install a skill from a repo - including when they describe the capability without saying "skill" and just want the agent to be able to do X reliably.
+license: MIT
 metadata:
   short-description: Create an Agent Skill and publish it to GitHub
 ---
