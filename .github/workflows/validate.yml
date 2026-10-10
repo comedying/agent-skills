@@ -1,0 +1,35 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # Fails on any HIGH finding (secrets, keys, .env, private material).
+      - name: Pre-publish scan
+        run: python skills/make-skill-and-publish/scripts/scan_publish_ready.py .
+
+      # `gh skill` is still in preview, so degrade gracefully on older runners.
+      - name: Validate skills against the Agent Skills spec
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh skill --help >/dev/null 2>&1; then
+            gh skill publish --dry-run
+          else
+            echo "::warning::'gh skill' is unavailable on this runner; skipped spec validation"
+          fi

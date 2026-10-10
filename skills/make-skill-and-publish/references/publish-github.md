@@ -162,6 +162,38 @@ plugins/{scope}/skills/*/SKILL.md
 
 交互式发布会引导你：给仓库加 `agent-skills` topic、选版本 tag、用自动生成的说明创建 release。
 
+> 没有 `gh`（或该 runner 上 `gh skill` 不可用）时，用技能自带的离线校验顶上：
+>
+> ```bash
+> python scripts/validate_skill.py <repo-root>
+> ```
+>
+> 它检查的是同一批机械规则（名称与目录一致、description 长度与字符、`allowed-tools` 形状、
+> 遗留 `[TODO: ...]`、reference 链接是否断掉）。它替代不了人工判断，但能替代"因为没装 gh 就不校验"。
+
+---
+
+## 五点五、更新已发布的技能
+
+改完一个已经发布过的技能，走这条最短路径：
+
+```bash
+python skills/<skill-name>/scripts/<any-script>.py .   # 先复跑发布前扫描
+git add -A && git commit -m "Update <skill-name>: <what changed>"
+git push
+gh skill publish --tag v1.1.0        # 必须换新 tag
+```
+
+几个容易踩的点：
+
+- **同一个 tag 不能复用。** `v1.0.0` 已经存在，再发布必须换成 `v1.1.0` / `v1.0.1`。
+- 改行为用 minor（`v1.1.0`），改错别字/文档用 patch（`v1.0.1`）。
+- 发布前先 `gh skill publish --dry-run`，它会把 `license` 之类的建议字段先挑出来。
+- 同步更新仓库根目录的 `CHANGELOG.md`，并把新版本号写进去。
+- 使用者那边用 `gh skill update` 升级，或 `gh skill install <owner>/<repo> <skill> --pin v1.1.0` 锁版本。
+- 忘了改 `version` 之类的地方没关系：`gh skill publish` 的校验会拦住名称、frontmatter 这类硬错误，
+  但**它不会**替你检查 README 与真实行为是否一致，那仍然要人看。
+
 ---
 
 ## 六、验证与安装

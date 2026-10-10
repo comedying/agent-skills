@@ -1,0 +1,40 @@
+{
+  "purpose": "Worked example of a trigger-eval set. These 20 queries were used to test make-skill-and-publish itself on 2026-10-10; copy the shape, not the content, when testing a different skill.",
+  "how_it_was_run": [
+    "Routing: one fresh agent saw only the skill descriptions (this skill plus skill-creator, skill-installer, documents as distractors) and judged each query, without being told the expected labels.",
+    "Behaviour: two further fresh agents were given a should-trigger query and a near-miss query as real tasks and reported whether any skill was actually loaded."
+  ],
+  "outcome": {
+    "routing_positives_hit": "10 / 10",
+    "routing_false_positive": ["Q11"],
+    "behaviour_should_trigger": "skill loaded and used",
+    "behaviour_near_miss": "no skill loaded",
+    "fix_applied": "Removed 'install a skill from a repo' from the description: it overlapped skill-installer and pulled in Q11. Also narrowed 'publish it to GitHub' to 'publish that skill to GitHub' and dropped the over-broad fallback clause."
+  },
+  "queries": [
+    { "id": "Q1",  "text": "帮我把「每周数据核对流程」做成技能，让组里其他人也能用", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q2",  "text": "我想让 AI 每次都按同一套流程帮我改论文，能固化下来吗", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q3",  "text": "把这份 SOP 变成 AI 能直接用的东西，顺便开源到 GitHub", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q4",  "text": "我们团队的 code review 清单想做成一个能安装、能复用的东西", "should_trigger": true,  "routing_verdict": true,  "confidence": "medium" },
+    { "id": "Q5",  "text": "帮我把这个 workflow 打包成一个 Agent Skill 并发布", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q6",  "text": "我有一套排查线上问题的步骤，想固化下来让 AI 照着做", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q7",  "text": "把这段提示词变成一个 skill，再传到 github", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q8",  "text": "怎么让 AI 每次都用这套 checklist，而不是每次我重新解释一遍", "should_trigger": true,  "routing_verdict": true,  "confidence": "medium" },
+    { "id": "Q9",  "text": "帮我从零做一个技能：输入会议录音文字，输出行动项", "should_trigger": true,  "routing_verdict": true,  "confidence": "high" },
+    { "id": "Q10", "text": "这份操作规范我想做成组内共享的技能包，带版本号那种", "should_trigger": true,  "routing_verdict": true,  "confidence": "medium" },
+    { "id": "Q11", "text": "帮我安装一个 skill（从 GitHub 仓库装到本机）", "should_trigger": false, "routing_verdict": true,  "confidence": "medium", "note": "false positive - belongs to skill-installer; drove the description fix" },
+    { "id": "Q12", "text": "帮我写一个 GitHub Actions workflow 来自动跑测试", "should_trigger": false, "routing_verdict": false, "confidence": "medium" },
+    { "id": "Q13", "text": "帮我把这个项目发布到 GitHub", "should_trigger": false, "routing_verdict": false, "confidence": "medium" },
+    { "id": "Q14", "text": "帮我审查一份 SKILL.md 写得对不对", "should_trigger": false, "routing_verdict": true,  "confidence": "low", "note": "borderline - the reviewer argued skill review is uncovered by any installed skill" },
+    { "id": "Q15", "text": "帮我把这段文字改得更口语化", "should_trigger": false, "routing_verdict": false, "confidence": "high" },
+    { "id": "Q16", "text": "帮我写一个每周数据核对的 Python 脚本", "should_trigger": false, "routing_verdict": false, "confidence": "high", "behaviour_verdict": "no skill loaded" },
+    { "id": "Q17", "text": "帮我总结这篇文章", "should_trigger": false, "routing_verdict": false, "confidence": "high" },
+    { "id": "Q18", "text": "帮我把这份报告转成 Word", "should_trigger": false, "routing_verdict": false, "confidence": "high" },
+    { "id": "Q19", "text": "帮我写一个 git commit message", "should_trigger": false, "routing_verdict": false, "confidence": "high" },
+    { "id": "Q20", "text": "帮我在这台机器上配一下 gh 的登录", "should_trigger": false, "routing_verdict": false, "confidence": "high" }
+  ],
+  "known_gaps": [
+    "Q14 (review an existing SKILL.md) is genuinely uncovered: neither this skill nor skill-creator claims 'review / audit an existing skill' in its description. Left as a known gap rather than expanding this skill's scope on low-confidence evidence.",
+    "'workflow' is still a slightly risky word in the description, because GitHub Actions workflows share it."
+  ]
+}

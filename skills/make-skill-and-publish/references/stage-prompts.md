@@ -92,16 +92,22 @@ README 必须与项目真实功能一致。
 | 只到「gh 登录」 | 没写怎么建仓、推送、发版 | 补 `gh repo create ... --source . --push` 与 `gh skill publish --tag` |
 | README 要求 | 没问题，保留 | 补充：README 只在仓库根目录，skill 目录内不要另放 README |
 
-另有两处**当前环境**特有的现实约束，务必先确认：
+另有两处现实约束，务必先确认：
 
 - `gh skill` 系列命令仍是 **preview**，随版本可能变化；
-- 发布技能需要 GitHub CLI，本机当前**未安装 `gh`**，需先装（见 `publish-github.md`）。
+- 发布技能需要 GitHub CLI。**先跑 `gh --version` 确认它是否存在**，没有就装（见
+  `publish-github.md`）；在装好之前，规范校验改用技能自带的 `scripts/validate_skill.py`
+  离线完成，不要因为缺 gh 就跳过校验。
 
 ---
 
 ## 三、修订后的提示词模板（可直接复制）
 
 把 `<尖括号>` 里的内容替换成你的实际信息。P1–P5 可单用，P0 是串起来的一键版。
+
+> **两种执行纪律，别混用。** `SKILL.md` 里只有一个硬闸门（发布前检查之后）；
+> 下面 P0 中「每个阶段都停下来确认」是**给想逐步盯着的用户**用的可选加强版。
+> 两者冲突时，以 `SKILL.md` 的 Workflow 为准。
 
 ### P0｜一键版（推荐）
 

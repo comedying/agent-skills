@@ -1,6 +1,6 @@
 ---
 name: make-skill-and-publish
-description: Turn a plain-language requirement, document, or workflow into a complete, validated Agent Skill and publish it to GitHub. Use when the user wants a skill created, wants to package a repeatable capability for an agent, or wants to open-source, release, share, or install a skill from a repo - including when they describe the capability without saying "skill" and just want the agent to be able to do X reliably.
+description: Turn a plain-language requirement, document, or repeatable process into a complete, validated Agent Skill and publish that skill to GitHub. Use when the user wants a skill authored from scratch, wants a capability packaged so an agent reuses it every time, or wants their own skill updated and released so others can install it - including when they never say "skill". Not for installing someone else's skill, or for publishing a non-skill project to GitHub.
 license: MIT
 metadata:
   short-description: Create an Agent Skill and publish it to GitHub
@@ -20,9 +20,10 @@ external mutation: the human authorizes it, you do the mechanical work.
 2. **Pause at authorization.** Run read-only checks freely (`gh auth status`, `git status`,
    `gh repo view`). The moment a browser, verification code, 2FA, or account password is
    required, stop and hand control back to the user.
-3. **Nothing leaves the machine before the scan.** Run the pre-publish scan, report the raw
-   findings, and get an explicit go-ahead before `git commit`, any remote, or any upload.
-   Never proceed past an unresolved HIGH finding.
+3. **Exactly one hard gate, and it is explicit.** Preparing the working tree is allowed at any
+   time: write `.gitignore`, run `git init -b main`, inspect with `git status`. Then **stop**.
+   `git add`, `git commit`, creating a remote, and any upload all wait until the user has seen
+   the step 6 output and said go. Never proceed past an unresolved HIGH finding.
 4. **Do not fabricate.** The README, description, and examples must describe what the skill
    actually does. If the requirement is under-specified, say what is missing instead of
    padding it.
@@ -40,7 +41,7 @@ external mutation: the human authorizes it, you do the mechanical work.
 - [ ] 4. Test it against a realistic request
 - [ ] 5. Write the repo README
 - [ ] 6. Run the pre-publish scan and report
-- [ ] 7. Commit
+- [ ] 7. **STOP - get the go-ahead, then commit**
 - [ ] 8. Publish to GitHub
 - [ ] 9. Verify and report
 
@@ -53,19 +54,31 @@ would change the skill's structure; otherwise infer and state the assumption.
 
 ### 2. Scaffold
 
-Prefer the bundled initializer so the required files are consistent:
+Scaffold with the bundled initializer. It is self-contained (standard library only), so the
+skill works even where the Codex `skill-creator` system skill is absent:
 
 ```bash
-python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/init_skill.py" <name> \
-  --path <output-dir> [--resources references,scripts,assets] [--interface short_description="..."]
+# from anywhere - call the script by path; it creates <output-dir>/<name>/
+python "<skill-dir>/scripts/new_skill.py" <name> --path <repo>/skills [--resources references,scripts,assets]
 ```
 
-If that script is unavailable, create the folder by hand: `SKILL.md` (required), plus only
-the optional pieces the workflow needs (`agents/openai.yaml`, `scripts/`, `references/`,
-`assets/`). Do not create empty scaffolding.
+- `--path` is the **parent** directory, not the skill directory: `--path <repo>/skills` yields
+  `<repo>/skills/<name>/`, which is what the repo layout below requires.
+- `agents/openai.yaml` is always created. It is not one of the `--resources` values; those
+  only control the optional `references/`, `scripts/`, and `assets/` folders.
+- The bare `python scripts/...` form used elsewhere in this file assumes you are already
+  inside the skill directory. From anywhere else, call the script by its full path.
+
+The host's `skill-creator` (`init_skill.py`) produces an equivalent skeleton and is fine to
+use instead when present. Only if neither is available, create the files by hand: `SKILL.md`
+(required) plus the optional pieces the workflow actually needs (`agents/openai.yaml`,
+`scripts/`, `references/`, `assets/`). Do not create empty scaffolding.
 
 ### 3. Write the skill
 
+- **Frontmatter.** `name` and `description` are required. Add `license: MIT` (or the license
+  the user chose) before publishing - `gh skill publish` flags it as a recommended field when
+  absent. `metadata.short-description` is optional UI metadata. Do not add other keys.
 - **`description` is the routing surface.** It is the only thing loaded before the skill
   activates. Write it as an instruction: "Use when ...". Describe the user's intent, list the
   contexts where it applies even if the user never names the domain, and keep it under 1024
@@ -76,15 +89,26 @@ the optional pieces the workflow needs (`agents/openai.yaml`, `scripts/`, `refer
 - **Push detail out.** Move long procedures, schemas, and examples into `references/` and link
   each one with the condition for reading it ("read `references/x.md` when ..."). Bundle a
   tested script in `scripts/` when the same logic would otherwise be rewritten every run.
-- Ready-to-use Chinese prompt templates for every stage are in
-  [references/stage-prompts.md](references/stage-prompts.md).
+- Ready-to-use Chinese prompt templates for the spec, scaffolding, README, pre-publish check,
+  `gh` login, and publishing stages are in
+  [references/stage-prompts.md](references/stage-prompts.md). They are the chat-facing version
+  of this workflow and are deliberately looser; when they disagree with this file, this file
+  wins.
 
 ### 4. Test before publishing
 
 Run the skill against at least one realistic request, not a toy one. Inspect the artifacts it
-produced, not the wording. Fix what fails and re-run. Sanity-check triggering in both
-directions: it should fire on a realistic phrasing that does not name the domain, and stay
-quiet on a near-miss that shares vocabulary but needs something else.
+produced, not the wording. Fix what fails and re-run.
+
+For triggering, write the query set first (8-10 that should fire, including phrasings that
+never name the domain; 8-10 near-misses that should stay quiet), following
+[references/stage-prompts.md](references/stage-prompts.md).
+[assets/trigger-eval-queries.json](assets/trigger-eval-queries.json) is a worked example: the
+20 queries used to test this skill itself, with their labels and the observed outcome.
+Then actually run it: if you can
+start a fresh agent session with the skill installed, do that and record hit/miss per query.
+If you cannot produce a second session, save the query set as a file and mark it **not
+executed** - do not describe triggering as verified when it was not.
 
 ### 5. Write the repo README
 
@@ -92,26 +116,39 @@ One README, at the repo root, not inside the skill folder. It must cover: the pr
 solves, main features, installation, usage, and an input/output example - and it must match
 the real behavior.
 
-### 6. Pre-publish scan
+### 6. Pre-publish checks, then stop
+
+Run both and report their raw output:
 
 ```bash
 python scripts/scan_publish_ready.py <repo-root>
+python scripts/validate_skill.py <repo-root>
 ```
 
-It reports secrets, keys, tokens, PII, absolute paths, junk files, and oversized binaries,
-masking any secret values in its output. Report the findings verbatim and wait for
-confirmation. Add `--json` for structured output, or `--fail-on medium` to make it strict.
+`scan_publish_ready.py` reports secrets, keys, tokens, PII, absolute paths, junk files and
+oversized binaries, with any secret value masked (`--json` for structured output,
+`--fail-on medium` to be strict). `validate_skill.py` checks the Agent Skills rules offline -
+name/directory match, description limits, `allowed-tools` shape, leftover `[TODO: ...]`,
+broken reference links - so it still works when `gh` is unavailable.
 
-### 7. Commit
+Then **stop and wait for the go-ahead.** Do not continue to step 7 on your own.
 
-Add a `.gitignore` (see [references/publish-github.md](references/publish-github.md) for a
-starter), then `git init -b main`, stage, and commit with a clear message. Do not commit
-ignored files or test debris.
+### 7. Commit (gated)
+
+Only after the user approves the step 6 output. Writing `.gitignore`, running `git init -b main`
+and reading `git status` are allowed before the gate; `git add` and `git commit` are not.
+
+Use the `.gitignore` starter in [references/publish-github.md](references/publish-github.md),
+check with `git status --porcelain --ignored` that scratch directories are excluded, then
+stage and commit with a clear message. Do not commit ignored files or test debris.
 
 ### 8. Publish to GitHub
 
 Read [references/publish-github.md](references/publish-github.md) for the exact commands.
-Check `gh auth status` first; if not authenticated, hand off to the user for `gh auth login`.
+Start with `gh --version`. If `gh` is not installed, say so and give the host's install command
+(winget / brew / apt / dnf, per the reference) - do not work around it by hand-rolling a push.
+Then `gh auth status`; if not authenticated, hand off to the user for `gh auth login`.
+
 Two paths, often used together:
 
 - **Repo + push:** `gh repo create ... --source . --push` publishes the code.
@@ -120,9 +157,13 @@ Two paths, often used together:
 
 ### 9. Verify and report
 
-Confirm the remote actually has the content (`gh repo view`, `git ls-remote`, or open the
-release). Report the repo URL, what was published, how to install it, and anything you could
-not verify.
+If you stopped at the gate, report the local state instead and say plainly what is pending:
+files created, scan and validation results, and the exact command that would publish. Never
+describe unpublished work as published.
+
+After publishing, confirm the remote actually has the content (`gh repo view`,
+`git ls-remote`, or open the release) and report the repo URL, the release URL, how to install
+it, and anything you could not verify.
 
 ## Repo layout
 
@@ -136,7 +177,8 @@ not verify.
         |-- SKILL.md
         |-- agents/
         |-- references/
-        `-- scripts/
+        |-- scripts/
+        `-- assets/
 ```
 
 `gh skill publish` discovers skills at `skills/*/SKILL.md`, `skills/{scope}/*/SKILL.md`,
