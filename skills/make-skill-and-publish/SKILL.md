@@ -182,8 +182,10 @@ it, and anything you could not verify.
 ```
 
 `gh skill publish` discovers skills at `skills/*/SKILL.md`, `skills/{scope}/*/SKILL.md`,
-`*/SKILL.md` (root-level), and `plugins/{scope}/skills/*/SKILL.md`, so keeping the skill under
-`skills/<name>/` makes it both publishable and installable.
+`{prefix}/skills/*/SKILL.md`, `{prefix}/skills/{scope}/*/SKILL.md`, `*/SKILL.md` (root-level),
+and `plugins/*/skills/*/SKILL.md`, so keeping the skill under `skills/<name>/` makes it both
+publishable and installable. `scripts/validate_skill.py` searches the same six layouts, so a
+tree that passes the offline check is one `gh skill publish` will actually find.
 
 ## Gotchas
 
